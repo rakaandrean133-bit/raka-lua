@@ -1,0 +1,531 @@
+-- ===================================================
+-- SCRIPT DROP CURRENCY + CUSTOM GUI MENU (RKPROXY)
+-- Script by RkProxy
+-- ===================================================
+
+-- FUNGSI MENDAPATKAN DATA PLAYER & WORLD
+local function getPlayerData()
+    local name = "Unknown"
+    local uid = "0"
+    local world = "EXIT"
+    
+    if GetLocal then
+        local localPlayer = GetLocal()
+        if localPlayer then
+            name = localPlayer.name or "Unknown"
+            uid = tostring(localPlayer.userid or localPlayer.netid or "0")
+        end
+    end
+    
+    if GetWorld then
+        local w = GetWorld()
+        if w and w.name then
+            world = w.name
+        end
+    end
+    
+    name = name:gsub("`%S", "")
+    return name, uid, world
+end
+
+-- ===================================================
+-- CONFIGURATION: STRICT SYNC UID LOCK SYSTEM
+-- ===================================================
+local ALLOWED_UIDS = {
+    "816205", -- UID Anda
+    "1038765", -- [PERBAIKAN] Ditambahkan koma agar tidak syntax error
+    "1038937"
+}
+
+local function isAllowedUID(targetUID)
+    if not targetUID or targetUID == "0" or targetUID == "" then return false end
+    for _, uid in ipairs(ALLOWED_UIDS) do
+        if tostring(uid) == tostring(targetUID) then
+            return true
+        end
+    end
+    return false
+end
+
+-- CEK UID SECARA SINKRON
+local currentUID = "0"
+local currentName = "Unknown"
+local startTime = os.clock()
+
+while (currentUID == "0" or currentUID == "nil") and (os.clock() - startTime < 2.0) do
+    local name, uid, _ = getPlayerData()
+    if uid and uid ~= "0" then
+        currentUID = uid
+        currentName = name
+        break
+    end
+    Sleep(100)
+end
+
+if not isAllowedUID(currentUID) then
+    LogToConsole("`0[ `4RkProxy `0] `4[SECURITY] Access denied! Your UID (" .. tostring(currentUID) .. ") is not registered.")
+    if SendVariantList then
+        SendVariantList({[0] = "OnTextOverlay", [1] = "`4[RkProxy] Access Denied! Invalid UID."})
+    end
+    error("Script terminated: Unauthorized UID -> " .. tostring(currentUID))
+else
+    if SendPacket then
+        SendPacket(2, "action|input\n|text|`0[`4 RkProxy `0] `2" .. currentName .. " `0(`b" .. currentUID .. "`0) `2Access Granted")
+    end
+end
+
+-- ===================================================
+-- CONFIG WEBHOOK & ITEM ID
+-- ===================================================
+local START_WEBHOOK = "https://discord.com/api/webhooks/1551175615397236787/scU1eEfoyIaHcRYxrUqjxoNxoRF1xh851_H19vhaHBUpOJyxcl7bHzLdZP_8wdaLJA3d"
+local DROP_WEBHOOK  = "https://discord.com/api/webhooks/1551180469486223432/7-56ROj_a-VyO4XJWLl_uH0zs0wDQL720q5imitw2QBXnVWafHpdPlOdYSxiI7XyqgWe"
+
+local ID_BLACK     = 11550
+local ID_BGL       = 7188
+local ID_DL        = 1796
+local ID_WL        = 242
+local ID_TELEPHONE = 3898
+
+local isRunning = false
+local autoBGL   = true
+
+local function inv(id)
+    for _, item in pairs(GetInventory() or {}) do
+        if item.id == id then
+            return item.amount or 0
+        end
+    end
+    return 0
+end
+
+local function jsonEscape(str)
+    return tostring(str or "")
+        :gsub("\\", "\\\\")
+        :gsub("\"", "\\\"")
+        :gsub("\n", "\\n")
+        :gsub("\r", "")
+end
+
+local function sendStartWebhook(bankBGL)
+    if not START_WEBHOOK or START_WEBHOOK == "" or START_WEBHOOK:find("YOUR_") then return end
+
+    local growId, uid, worldName = getPlayerData()
+    
+    local description = string.format(
+        "**%s** (`%s`) has started **RkProxy**.\n\n" ..
+        "🌍 **World:** `%s`\n\n" ..
+        "<:blc:1282591669883244596> **Black:** %d\n" ..
+        "<:bgl:1327480606136991816> **BGL:** %d\n" ..
+        "<a:dl:1435231345839312896> **DL:** %d\n\n" ..
+        "<:bgl:1327480606136991816> **In Bank:** %d",
+        growId,
+        uid,
+        worldName,
+        inv(ID_BLACK),
+        inv(ID_BGL),
+        inv(ID_DL),
+        bankBGL or 0
+    )
+
+    local payload = string.format(
+        '{"content":"@everyone","allowed_mentions":{"parse":["everyone"]},"embeds":[{"title":"🚀 RkProxy Active","description":"%s","color":5763719,"timestamp":"%s"}]}',
+        jsonEscape(description),
+        os.date("!%Y-%m-%dT%H:%M:%SZ")
+    )
+
+    -- [PERBAIKAN] Menggunakan HttpRequest/MakeRequest yang kompatibel aman
+    if HttpRequest then
+        HttpRequest(START_WEBHOOK, "POST", {["Content-Type"] = "application/json"}, payload)
+    elseif MakeRequest then
+        MakeRequest(START_WEBHOOK, "POST", {["Content-Type"] = "application/json"}, payload)
+    end
+end
+
+local function sendDropWebhook(url, title, content)
+    if not url or url == "" or url:find("YOUR_") then return end
+    
+    local growId, uid, worldName = getPlayerData()
+    local formattedMessage = string.format(
+        "👤 **Player:** %s (UID: %s) | 🌍 **World:** %s\n%s %s",
+        growId, uid, worldName, title, content
+    )
+    local payload = string.format('{"content": "%s"}', jsonEscape(formattedMessage))
+    
+    if HttpRequest then
+        HttpRequest(url, "POST", {["Content-Type"] = "application/json"}, payload)
+    elseif MakeRequest then
+        MakeRequest(url, "POST", {["Content-Type"] = "application/json"}, payload)
+    end
+end
+
+local function ngomong(text)
+    SendPacket(2, "action|input\n|text|" .. text)
+end
+
+local function textoverlay(text)
+    SendVariantList({[0] = "OnTextOverlay", [1] = text})
+end
+
+local function cLog(str)
+    LogToConsole("`0[ `4RkProxy `0] `0" .. str)
+end
+
+local prefixDrop = "`0[`4RkProxy`0] "
+
+local function showMainMenu()
+    local dialog = "set_default_color|`o\n" ..
+                   "add_label_with_icon|big|`4RkProxy|left|11550|\n" ..
+                   "add_textbox|`pProxy Version : `2v1.0.0|\n" ..
+                   "add_spacer|small|\n" ..
+                   "add_textbox|`2Update Logs =|\n" ..
+                   "add_spacer|small|\n" ..
+                   "add_textbox|`4Bug Fixes =|\n" ..
+                   "add_spacer|medium|\n" ..
+                   "add_textbox|`b`4Command / Menu Bar|\n" ..
+                   "add_spacer|small|\n" ..
+                   "add_button|cmd_helper|`9Commands Helper|noflags|0|0|\n" ..
+                   "add_spacer|small|\n" ..
+                   "add_button|close_menu|`4Close|noflags|0|0|\n" ..
+                   "add_quick_exit|\n"
+    SendVariantList({[0] = "OnDialogRequest", [1] = dialog})
+end
+
+local function showHelperMenu()
+    local dialog = "set_default_color|`o\n" ..
+                   "add_label_with_icon|big|`eCommand `3Helper|left|7188|\n" ..
+                   "add_spacer|small|\n" ..
+                   "add_textbox|`c=== Main Command List ===|\n" ..
+                   "add_textbox|`4/dall `0: ALL IN! Drop all locks in backpack|\n" ..
+                   "add_textbox|`3/d <amount> `0: Drop Currency (Auto BGL/DL) 1x|\n" ..
+                   "add_textbox|`3/fcv `0: Toggle Fast Convert DL -> BGL (ON/OFF)|\n" ..
+                   "add_textbox|`3/wd <amount> `0: Drop World Lock|\n" ..
+                   "add_textbox|`3/dd `0: Drop Diamond Lock|\n" ..
+                   "add_textbox|`3/bd `0: Drop Blue Gem Lock|\n" ..
+                   "add_textbox|`3/bdl <amount> `0: Drop Black Gem Lock|\n" ..
+                   "add_textbox|`3/menu `0: Open this Custom GUI Menu|\n" ..
+                   "add_spacer|small|\n" ..
+                   "add_button|cmd_back_main|`1<- Back to Main Menu|noflags|0|0|\n" ..
+                   "add_quick_exit|\n"
+    SendVariantList({[0] = "OnDialogRequest", [1] = dialog})
+end
+
+local function getTelephonePos()
+    for _, tile in pairs(GetTiles() or {}) do
+        if tile.fg == ID_TELEPHONE or tile.bg == ID_TELEPHONE then
+            return tile.x, tile.y
+        end
+    end
+    return nil, nil
+end
+
+AddHook("onvariant", "dialog_and_convert_handler", function(var)
+    if var[0] == "OnDialogRequest" then
+        local dialog = tostring(var[1] or "")
+        local dialogLower = dialog:lower()
+
+        if dialogLower:find("exchange for 100 diamond lock") 
+        or dialogLower:find("exchange for 100 world lock") 
+        or dialogLower:find("fast delivery")
+        or dialogLower:find("are you sure you want to compress") then
+            return true
+        end
+
+        if autoBGL and (dialogLower:find("telephone") or dialogLower:find("bglconvert") or dialogLower:find("100 diamond lock") or dialogLower:find("phone #")) then
+            if inv(ID_DL) >= 100 and not isRunning then
+                local tx = dialog:match("x|(%d+)")
+                local ty = dialog:match("y|(%d+)")
+                local numPhone = dialog:match("num|(%d+)") or "53785"
+
+                if not tx or not ty then
+                    tx, ty = getTelephonePos()
+                end
+
+                if tx and ty then
+                    isRunning = true
+                    RunThread(function()
+                        while autoBGL and inv(ID_DL) >= 100 do
+                            SendPacket(2, "action|dialog_return\ndialog_name|telephone\nnum|" .. numPhone .. "|\nx|" .. tx .. "|\ny|" .. ty .. "|\nbuttonClicked|bglconvert")
+                            cLog("`2[AUTO FCV] 100 DL -> 1 BGL!")
+                            Sleep(600)
+                        end
+                        isRunning = false
+                    end)
+                end
+            end
+            return true
+        end
+    end
+end)
+
+AddHook("onsendpacket", "menu_button_handler", function(type, str)
+    if str then
+        if str:find("buttonClicked|cmd_helper") then
+            showHelperMenu()
+            return true
+        elseif str:find("buttonClicked|cmd_back_main") then
+            showMainMenu()
+            return true
+        end
+    end
+end)
+
+RunThread(function()
+    while true do
+        if not isRunning then
+            if inv(ID_WL) >= 100 then
+                SendPacketRaw(false, {type = 10, value = ID_WL})
+                cLog("`2[AUTO] 100 WL -> 1 DL")
+                Sleep(600)
+            end
+        end
+        Sleep(100)
+    end
+end)
+
+AddHook("onsendpacket", "currency_drop_handler", function(type, str)
+    if not str then return end
+
+    if str:match("text|%s*/menu") then
+        showMainMenu()
+        return true
+    end
+
+    if str:match("text|%s*/fcv") then
+        autoBGL = not autoBGL
+        local msg = autoBGL and "`2Fast Convert DL -> BGL: ENABLED (ON)" or "`4Fast Convert DL -> BGL: DISABLED (OFF)"
+        cLog(msg)
+        textoverlay(msg)
+        return true
+    end
+
+    if str:match("text|%s*/dall") then
+        if isRunning then return true end
+        isRunning = true
+
+        RunThread(function()
+            local cBlack = inv(ID_BLACK)
+            local cBGL   = inv(ID_BGL)
+            local cDL    = inv(ID_DL)
+            local cWL    = inv(ID_WL)
+
+            if cBlack == 0 and cBGL == 0 and cDL == 0 and cWL == 0 then
+                ngomong(prefixDrop .. "`4No locks found in inventory to drop!")
+                isRunning = false
+                return
+            end
+
+            local gameDroppedList = {}
+            local webhookDroppedList = {}
+
+            if cBlack > 0 then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_BLACK .. "|\nitem_count|" .. cBlack)
+                table.insert(gameDroppedList, "`b" .. cBlack + " Black`0")
+                table.insert(webhookDroppedList, cBlack .. " Black")
+                Sleep(400)
+            end
+
+            if cBGL > 0 then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_BGL .. "|\nitem_count|" .. cBGL)
+                table.insert(gameDroppedList, "`e" .. cBGL .. " BGL`0")
+                table.insert(webhookDroppedList, cBGL .. " BGL")
+                Sleep(400)
+            end
+
+            if cDL > 0 then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_DL .. "|\nitem_count|" .. cDL)
+                table.insert(gameDroppedList, "`1" .. cDL .. " DL`0")
+                table.insert(webhookDroppedList, cDL .. " DL")
+                Sleep(400)
+            end
+
+            if cWL > 0 then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_WL .. "|\nitem_count|" .. cWL)
+                table.insert(gameDroppedList, "`9" .. cWL .. " WL`0")
+                table.insert(webhookDroppedList, cWL .. " WL")
+                Sleep(400)
+            end
+
+            local msg = prefixDrop .. "`4[ALL IN!] `0Dropped " .. table.concat(gameDroppedList, " ")
+            ngomong(msg)
+            cLog(msg)
+            sendDropWebhook(DROP_WEBHOOK, "📢 **[ALL IN DROP]**", table.concat(webhookDroppedList, ", "))
+            isRunning = false
+        end)
+        return true
+    end
+
+    local cmd, amount = str:match("text|%s*/(%a+)%s*(%d*)")
+    amount = tonumber(amount)
+
+    if not cmd or not amount or amount <= 0 then return end
+
+    if cmd == "d" then
+        if isRunning then return true end
+        isRunning = true
+
+        RunThread(function()
+            local reqBGL = math.floor(amount / 100)
+            local reqDL  = amount % 100
+
+            while inv(ID_BGL) < reqBGL and inv(ID_BLACK) > 0 do
+                local before = inv(ID_BGL)
+                SendPacket(2, "action|dialog_return\ndialog_name|info_box\nbuttonClicked|make_bluegl")
+                Sleep(350)
+                if inv(ID_BGL) <= before then break end
+            end
+
+            while inv(ID_DL) < reqDL and inv(ID_BGL) > 0 do
+                local before = inv(ID_DL)
+                SendPacketRaw(false, {type = 10, value = ID_BGL})
+                Sleep(350)
+                if inv(ID_DL) <= before then break end
+            end
+
+            local totalDLHave = inv(ID_DL) + (inv(ID_BGL) * 100) + (inv(ID_BLACK) * 10000)
+            if totalDLHave < amount then
+                ngomong(prefixDrop .. "`4Not enough locks in inventory for drop!")
+                isRunning = false
+                return
+            end
+
+            local gameSummary = {}
+            local webhookSummary = {}
+
+            if reqBGL > 0 and inv(ID_BGL) >= reqBGL then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_BGL .. "|\nitem_count|" .. reqBGL)
+                table.insert(gameSummary, "`e" .. reqBGL .. " BGL`0")
+                table.insert(webhookSummary, reqBGL .. " BGL")
+                Sleep(400)
+            end
+
+            if reqDL > 0 and inv(ID_DL) >= reqDL then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_DL .. "|\nitem_count|" .. reqDL)
+                table.insert(gameSummary, "`1" .. reqDL .. " DL`0")
+                table.insert(webhookSummary, reqDL .. " DL")
+                Sleep(400)
+            end
+
+            local msg = prefixDrop .. "`0Dropped " .. table.concat(gameSummary, " ")
+            ngomong(msg)
+            cLog(msg)
+            sendDropWebhook(DROP_WEBHOOK, "📦 **[DROP /d]**", table.concat(webhookSummary, ", "))
+
+            isRunning = false
+        end)
+        return true
+
+    elseif cmd == "wd" then
+        if isRunning then return true end
+        isRunning = true
+
+        RunThread(function()
+            local totalWLHave = inv(ID_WL) + (inv(ID_DL) * 100) + (inv(ID_BGL) * 10000) + (inv(ID_BLACK) * 1000000)
+            if totalWLHave < amount then
+                ngomong(prefixDrop .. "`4Not enough locks in inventory!")
+                isRunning = false
+                return
+            end
+
+            while inv(ID_WL) < amount and (inv(ID_DL) > 0 or inv(ID_BGL) > 0 or inv(ID_BLACK) > 0) do
+                if inv(ID_DL) == 0 and inv(ID_BGL) > 0 then
+                    local beforeDL = inv(ID_DL)
+                    SendPacketRaw(false, {type = 10, value = ID_BGL})
+                    Sleep(350)
+                    if inv(ID_DL) <= beforeDL then break end
+                end
+                if inv(ID_DL) == 0 and inv(ID_BGL) == 0 and inv(ID_BLACK) > 0 then
+                    local beforeBGL = inv(ID_BGL)
+                    SendPacket(2, "action|dialog_return\ndialog_name|info_box\nbuttonClicked|make_bluegl")
+                    Sleep(350)
+                    if inv(ID_BGL) <= beforeBGL then break end
+                end
+                if inv(ID_DL) > 0 then
+                    local beforeWL = inv(ID_WL)
+                    SendPacketRaw(false, {type = 10, value = ID_DL})
+                    Sleep(350)
+                    if inv(ID_WL) <= beforeWL then break end
+                end
+            end
+
+            if inv(ID_WL) >= amount then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_WL .. "|\nitem_count|" .. amount)
+                local msg = prefixDrop .. "`0Dropped `9" .. amount .. " World Lock"
+                ngomong(msg)
+                cLog(msg)
+                sendDropWebhook(DROP_WEBHOOK, "📦 **[DROP /wd]**", amount .. " WL")
+            else
+                ngomong(prefixDrop .. "`4Failed to break locks for WL drop!")
+            end
+            isRunning = false
+        end)
+        return true
+
+    elseif cmd == "dd" then
+        if isRunning then return true end
+        isRunning = true
+
+        RunThread(function()
+            while inv(ID_DL) < amount and inv(ID_BGL) > 0 do
+                local before = inv(ID_DL)
+                SendPacketRaw(false, {type = 10, value = ID_BGL})
+                Sleep(350)
+                if inv(ID_DL) <= before then break end
+            end
+
+            if inv(ID_DL) >= amount then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_DL .. "|\nitem_count|" .. amount)
+                local msg = prefixDrop .. "`0Dropped `1" .. amount .. " Diamond Lock"
+                ngomong(msg)
+                cLog(msg)
+                sendDropWebhook(DROP_WEBHOOK, "📦 **[DROP /dd]**", amount .. " DL")
+            else
+                ngomong(prefixDrop .. "`4Not enough DL or BGL!")
+            end
+            isRunning = false
+        end)
+        return true
+
+    elseif cmd == "bd" then
+        if isRunning then return true end
+        isRunning = true
+
+        RunThread(function()
+            while inv(ID_BGL) < amount and inv(ID_BLACK) > 0 do
+                local beforeBGL = inv(ID_BGL)
+                local beforeBlack = inv(ID_BLACK)
+                SendPacket(2, "action|dialog_return\ndialog_name|info_box\nbuttonClicked|make_bluegl")
+                Sleep(300)
+                if inv(ID_BGL) <= beforeBGL and inv(ID_BLACK) >= beforeBlack then break end
+            end
+
+            if inv(ID_BGL) >= amount then
+                SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_BGL .. "|\nitem_count|" .. amount)
+                local msg = prefixDrop .. "`0Dropped `e" .. amount .. " Blue Gem Lock"
+                ngomong(msg)
+                cLog(msg)
+                sendDropWebhook(DROP_WEBHOOK, "📦 **[DROP /bd]**", amount .. " BGL")
+            else
+                ngomong(prefixDrop .. "`4Not enough BGL or Black Gem Lock!")
+            end
+            isRunning = false
+        end)
+        return true
+
+    elseif cmd == "bdl" then
+        if inv(ID_BLACK) >= amount then
+            SendPacket(2, "action|dialog_return\ndialog_name|drop\nitem_drop|" .. ID_BLACK .. "|\nitem_count|" .. amount)
+            local msg = prefixDrop .. "`0Dropped `b" .. amount .. " Black Gem Lock"
+            ngomong(msg)
+            cLog(msg)
+            sendDropWebhook(DROP_WEBHOOK, "📦 **[DROP /bdl]**", amount .. " Black Gem Lock")
+        else
+            ngomong(prefixDrop .. "`4Not enough Black Gem Lock!")
+        end
+        return true
+    end
+end)
+
+-- Initialization
+cLog("`2Script Loaded! Type /menu for command info.")
+sendStartWebhook(0)
+showMainMenu()
